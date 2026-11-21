@@ -117,7 +117,7 @@ MODEL_PRICING = {
         "cache_write": 0.125, 
         "output": 0.5
     },
-    "deepseek/deepseek-v4.1-flash": {
+    "deepseek/deepseek-v4.1-flash-1017": {
         "input": 0.0113, 
         "cached_input": 0, 
         "cache_write": 0, 
