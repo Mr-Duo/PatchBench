@@ -1,4 +1,4 @@
-"""Runs Claude Code through the Claude Agent SDK, configured via a YAML file."""
+"""Runs Claude Code through the Claude Agent SDK, via the OpenRouter API."""
 
 import asyncio
 import json
@@ -6,12 +6,16 @@ import os
 import shutil
 from pathlib import Path
 
-import yaml
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, HookMatcher,
                               ResultMessage, SystemMessage, ToolResultBlock, ToolUseBlock,
                               UserMessage)
 
 from agent_base import AGENT_HOME, AGENT_USER, BUDGET_LIMIT, AgentHarness, main
+
+#: OpenRouter's Anthropic-compatible endpoint (no /v1).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+#: Env var holding the OpenRouter key.
+OPENROUTER_KEY_NAME = "OPENROUTER_API_KEY"
 
 #: Tool names whose arguments name a file the agent edited.
 WRITE_TOOL_NAMES = {"Write", "Edit", "MultiEdit", "NotebookEdit",
@@ -22,53 +26,15 @@ PATH_FIELD_NAMES = {"path", "file_path", "filePath", "target_file",
 #: Built-in tools that read or write files directly rather than through the shell.
 FILE_TOOLS = "Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep"
 
-#: Env var that points at the YAML config (main() constructs the harness, so
-#: this is the easiest way to choose a config without touching agent_base).
-CONFIG_ENV = "CLAUDECODE_CONFIG"
-DEFAULT_CONFIG = "claudecode_config.yaml"
-
-
-def load_config(path: str | os.PathLike) -> dict:
-    """Read and validate the YAML config."""
-    with open(path) as handle:
-        cfg = yaml.safe_load(handle) or {}
-
-    if not cfg.get("model_name"):
-        raise ValueError(f"{path}: 'model_name' is required.")
-    if not cfg.get("auth_token_name") and not cfg.get("api_key_name"):
-        raise ValueError(f"{path}: set at least one of 'auth_token_name' or 'api_key_name'.")
-
-    cfg.setdefault("base_url", None)
-    cfg.setdefault("auth_token_name", None)
-    cfg.setdefault("api_key_name", None)
-    cfg.setdefault("effort_level", None)
-    return cfg
-
-
-def read_secret(env_name: str | None) -> str | None:
-    """Return the value of the env var called ``env_name`` (None if no name given)."""
-    if not env_name:
-        return None
-    value = os.getenv(env_name)
-    if not value:
-        raise RuntimeError(f"Environment variable {env_name} is not set.")
-    return value
-
 
 class ClaudeCodeHarness(AgentHarness):
     name = "claudecode"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.config = load_config(os.getenv(CONFIG_ENV, DEFAULT_CONFIG))
-        # The YAML is the source of truth for these two.
-        self.model_name = self.config["model_name"]
-        if self.config["effort_level"]:
-            self.effort = self.config["effort_level"]
-
-        self.auth_token = read_secret(self.config["auth_token_name"])
-        self.api_key = read_secret(self.config["api_key_name"])
-
+        self.api_key = os.getenv(OPENROUTER_KEY_NAME)
+        assert self.api_key, f"{OPENROUTER_KEY_NAME} environment variable is not set."
+        # self.model_name must be an OpenRouter slug, e.g. "anthropic/claude-sonnet-4.5".
         self.chat_history = self.log_dir / "claudecode-chat-log.jsonl"
         # A previous run's transcript would be read as this run's until the
         # session ends and replaces it.
@@ -79,38 +45,26 @@ class ClaudeCodeHarness(AgentHarness):
         # Write-tool calls still waiting for their result: call id -> repo file.
         self._pending_writes: dict[str, str] = {}
 
-    # -- provider env -------------------------------------------------------
-
-    def _provider_env(self) -> dict[str, str]:
-        """Environment variables that point Claude Code at the configured provider."""
-        cfg = self.config
-        env: dict[str, str] = {}
-
-        if cfg["base_url"]:
-            env["ANTHROPIC_BASE_URL"] = cfg["base_url"]
-        if self.auth_token:
-            env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
-        # Must be explicitly empty when unused (e.g. OpenRouter), otherwise a
-        # stray inherited key may take precedence.
-        env["ANTHROPIC_API_KEY"] = self.api_key or ""
-
-        if cfg["effort_level"]:
-            env["CLAUDE_CODE_EFFORT_LEVEL"] = cfg["effort_level"]
-
-        # Third-party gateways don't serve Anthropic's default model IDs, so
-        # route every model alias (incl. the background "haiku" one) explicitly.
-        if cfg["base_url"]:
-            small = cfg["model_name"]
-            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg["model_name"]
-            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg["model_name"]
-            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = small
-        return env
-
     # -- running the agent --------------------------------------------------
 
     def invoke(self, prompt: str) -> None:
         """Run one SDK session, reporting spend as messages arrive."""
         asyncio.run(self._invoke_async(prompt))
+
+    def _openrouter_env(self) -> dict[str, str]:
+        """Environment that points Claude Code at OpenRouter."""
+        return {
+            "ANTHROPIC_BASE_URL": OPENROUTER_BASE_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.api_key,
+            # Must be explicitly empty so an inherited Anthropic key is not used.
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_CODE_EFFORT_LEVEL": self.effort,
+            # OpenRouter doesn't serve Anthropic's default model IDs, so route
+            # every alias (including the background "haiku" one) to our model.
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": self.model_name,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": self.model_name,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": self.model_name,
+        }
 
     async def _invoke_async(self, prompt: str) -> None:
         options = ClaudeAgentOptions(
@@ -119,7 +73,7 @@ class ClaudeCodeHarness(AgentHarness):
             cwd=self.repo_folder,
             # The SDK runs here as root and starts the CLI as the agent's user.
             user=AGENT_USER,
-            env=self.agent_env(**self._provider_env()),
+            env=self.agent_env(**self._openrouter_env()),
             allowed_tools=["Read", "Write", "Edit", "Bash"],
             disallowed_tools={"WebSearch", "WebFetch"},
             hooks={"PreToolUse": [HookMatcher(matcher=FILE_TOOLS, hooks=[self._file_gate])]},
