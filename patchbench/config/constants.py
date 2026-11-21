@@ -105,19 +105,19 @@ MODEL_PRICING = {
         "cache_write": 5.00, 
         "output": 20
     },
-    "claude-haiku-5.5": {
+    "anthropic/claude-haiku-5.5": {
         "input": 0.1, 
         "cached_input": 0.01, 
         "cache_write": 0.125, 
         "output": 0.5
     },
-    "gpt-6-luna": {
+    "openai/gpt-6-luna": {
         "input": 0.1, 
         "cached_input": 0.01, 
         "cache_write": 0.125, 
         "output": 0.5
     },
-    "deepseek-v4.1-flash": {
+    "deepseek/deepseek-v4.1-flash": {
         "input": 0.0113, 
         "cached_input": 0, 
         "cache_write": 0, 

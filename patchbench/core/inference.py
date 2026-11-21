@@ -226,7 +226,7 @@ class Inference(Stage):
             # Only root here uses the socket: agent/forward, to start each of
             # the agent's commands in the task container, and the harness, to
             # set up the shared folders.
-            '  -v /var/run/docker.sock:/var/run/docker.sock \\\n'
+            '  -v "${DOCKER_HOST#unix://}":/var/run/docker.sock \\\n'
             + self._mounts()
             + f'  -v {self.paths.harnesses}:/harnesses:ro \\\n'
             # The harnesses import `constants` by name. It cannot be mounted
