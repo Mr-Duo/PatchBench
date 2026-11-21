@@ -1,4 +1,4 @@
-"""Runs Claude Code through the Claude Agent SDK."""
+"""Runs Claude Code through the Claude Agent SDK, configured via a YAML file."""
 
 import asyncio
 import json
@@ -6,6 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
+import yaml
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, HookMatcher,
                               ResultMessage, SystemMessage, ToolResultBlock, ToolUseBlock,
                               UserMessage)
@@ -21,14 +22,53 @@ PATH_FIELD_NAMES = {"path", "file_path", "filePath", "target_file",
 #: Built-in tools that read or write files directly rather than through the shell.
 FILE_TOOLS = "Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep"
 
+#: Env var that points at the YAML config (main() constructs the harness, so
+#: this is the easiest way to choose a config without touching agent_base).
+CONFIG_ENV = "CLAUDECODE_CONFIG"
+DEFAULT_CONFIG = "claudecode_config.yaml"
+
+
+def load_config(path: str | os.PathLike) -> dict:
+    """Read and validate the YAML config."""
+    with open(path) as handle:
+        cfg = yaml.safe_load(handle) or {}
+
+    if not cfg.get("model_name"):
+        raise ValueError(f"{path}: 'model_name' is required.")
+    if not cfg.get("auth_token_name") and not cfg.get("api_key_name"):
+        raise ValueError(f"{path}: set at least one of 'auth_token_name' or 'api_key_name'.")
+
+    cfg.setdefault("base_url", None)
+    cfg.setdefault("auth_token_name", None)
+    cfg.setdefault("api_key_name", None)
+    cfg.setdefault("effort_level", None)
+    return cfg
+
+
+def read_secret(env_name: str | None) -> str | None:
+    """Return the value of the env var called ``env_name`` (None if no name given)."""
+    if not env_name:
+        return None
+    value = os.getenv(env_name)
+    if not value:
+        raise RuntimeError(f"Environment variable {env_name} is not set.")
+    return value
+
 
 class ClaudeCodeHarness(AgentHarness):
     name = "claudecode"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.api_key = os.getenv("ANTHROPIC_API_KEY")
-        assert self.api_key is not None, "ANTHROPIC_API_KEY environment variable is not set."
+        self.config = load_config(os.getenv(CONFIG_ENV, DEFAULT_CONFIG))
+        # The YAML is the source of truth for these two.
+        self.model_name = self.config["model_name"]
+        if self.config["effort_level"]:
+            self.effort = self.config["effort_level"]
+
+        self.auth_token = read_secret(self.config["auth_token_name"])
+        self.api_key = read_secret(self.config["api_key_name"])
+
         self.chat_history = self.log_dir / "claudecode-chat-log.jsonl"
         # A previous run's transcript would be read as this run's until the
         # session ends and replaces it.
@@ -38,6 +78,33 @@ class ClaudeCodeHarness(AgentHarness):
         self._written: set[str] = set()
         # Write-tool calls still waiting for their result: call id -> repo file.
         self._pending_writes: dict[str, str] = {}
+
+    # -- provider env -------------------------------------------------------
+
+    def _provider_env(self) -> dict[str, str]:
+        """Environment variables that point Claude Code at the configured provider."""
+        cfg = self.config
+        env: dict[str, str] = {}
+
+        if cfg["base_url"]:
+            env["ANTHROPIC_BASE_URL"] = cfg["base_url"]
+        if self.auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
+        # Must be explicitly empty when unused (e.g. OpenRouter), otherwise a
+        # stray inherited key may take precedence.
+        env["ANTHROPIC_API_KEY"] = self.api_key or ""
+
+        if cfg["effort_level"]:
+            env["CLAUDE_CODE_EFFORT_LEVEL"] = cfg["effort_level"]
+
+        # Third-party gateways don't serve Anthropic's default model IDs, so
+        # route every model alias (incl. the background "haiku" one) explicitly.
+        if cfg["base_url"]:
+            small = cfg["model_name"]
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg["model_name"]
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg["model_name"]
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = small
+        return env
 
     # -- running the agent --------------------------------------------------
 
@@ -52,8 +119,7 @@ class ClaudeCodeHarness(AgentHarness):
             cwd=self.repo_folder,
             # The SDK runs here as root and starts the CLI as the agent's user.
             user=AGENT_USER,
-            env=self.agent_env(ANTHROPIC_API_KEY=self.api_key,
-                               CLAUDE_CODE_EFFORT_LEVEL=self.effort),
+            env=self.agent_env(**self._provider_env()),
             allowed_tools=["Read", "Write", "Edit", "Bash"],
             disallowed_tools={"WebSearch", "WebFetch"},
             hooks={"PreToolUse": [HookMatcher(matcher=FILE_TOOLS, hooks=[self._file_gate])]},

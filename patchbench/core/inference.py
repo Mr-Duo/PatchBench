@@ -210,7 +210,8 @@ class Inference(Stage):
 
     def _run_agent(self, task: Task) -> str:
         """Run the agent image against the same folders, in the foreground."""
-        key = AGENT_API_KEYS.get(task.agent) or MODEL_API_KEYS.get(MODELS[task.model_name])
+        # key = AGENT_API_KEYS.get(task.agent) or MODEL_API_KEYS.get(MODELS[task.model_name])
+        key = MODEL_API_KEYS.get(MODELS[task.model_name])
         if key is None:
             raise ValueError(f"no API key is known for {task.agent} with model {task.model_name}")
         return (

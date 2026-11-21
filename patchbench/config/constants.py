@@ -105,6 +105,24 @@ MODEL_PRICING = {
         "cache_write": 5.00, 
         "output": 20
     },
+    "claude-haiku-5.5": {
+        "input": 0.1, 
+        "cached_input": 0.01, 
+        "cache_write": 0.125, 
+        "output": 0.5
+    },
+    "gpt-6-luna": {
+        "input": 0.1, 
+        "cached_input": 0.01, 
+        "cache_write": 0.125, 
+        "output": 0.5
+    },
+    "deepseek-v4.1-flash": {
+        "input": 0.0113, 
+        "cached_input": 0, 
+        "cache_write": 0, 
+        "output": 0.5683
+    },
 }
 
 C_CPP_EXTENSIONS = {
@@ -160,12 +178,19 @@ GEMINI_REASONING_MODELS = [
     'gemini-3.5-flash'
 ]
 
+OPENROUTER_MODELS = [
+    'claude-haiku-5.5',
+    'gpt-6-luna',
+    'deepseek-v4.1-flash'
+]
+
 # The environment variable holding the API key of each model's provider.
 MODEL_API_KEYS = {
     **dict.fromkeys(OPENAI_NO_REASONING_MODELS + OPENAI_REASONING_MODELS + OPENAI_RESPONSE_MODELS,
                     "OPENAI_API_KEY"),
     **dict.fromkeys(CLAUDE_MODELS, "ANTHROPIC_API_KEY"),
     **dict.fromkeys(GEMINI_NO_REASONING_MODELS + GEMINI_REASONING_MODELS, "GEMINI_API_KEY"),
+    **dict.fromkeys(OPENROUTER_MODELS, "OPENROUTER_API_KEY"),
 }
 
 AGENT_API_KEYS = {"claudecode": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
@@ -209,5 +234,9 @@ MODELS = {
     'gemini-2-flash': 'gemini-2.0-flash',
     'gemini-1.5-flash': 'gemini-1.5-flash',
     'gemini-1.5-pro': 'gemini-1.5-pro',
-
+    
+    # openrouter
+    'claude-haiku-5.5': 'anthropic/claude-haiku-5.5',
+    'gpt-6-luna': 'openai/gpt-6-luna',
+    'deepseek-v4.1-flash': 'deepseek/deepseek-v4.1-flash-1017'
 }
