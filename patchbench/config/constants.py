@@ -179,9 +179,9 @@ GEMINI_REASONING_MODELS = [
 ]
 
 OPENROUTER_MODELS = [
-    'claude-haiku-5.5',
-    'gpt-6-luna',
-    'deepseek-v4.1-flash'
+    'anthropic/claude-haiku-5.5',
+    'openai/gpt-6-luna',
+    'deepseek/deepseek-v4.1-flash-1017'
 ]
 
 # The environment variable holding the API key of each model's provider.
